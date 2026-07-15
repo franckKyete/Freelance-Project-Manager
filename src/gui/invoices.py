@@ -12,7 +12,7 @@ from src.exceptions.app_exceptions import (
 )
 from src.gui.theme import (
     BG_DARK, BG_CARD, ACCENT, ACCENT_2, SUCCESS, WARNING, DANGER,
-    FG_PRIMARY, FG_SECONDARY, FG_MUTED,
+    FG_PRIMARY, FG_SECONDARY, FG_MUTED, BORDER,
     FONT_H2, FONT_H3, FONT_BODY, FONT_SMALL,
     CONTENT_PAD, CARD_PAD,
 )
@@ -69,8 +69,14 @@ class InvoicesFrame(tk.Frame):
         # Action bar
         actions = tk.Frame(self, bg=BG_DARK, pady=8)
         actions.pack(fill=tk.X)
-        make_button(actions, "✔ Mark Paid", self._mark_paid, color=SUCCESS).pack(side=tk.LEFT, padx=(0, 8))
-        make_danger_button(actions, "🗑 Delete", self._delete_invoice).pack(side=tk.LEFT)
+        self._view_btn = make_button(actions, "👁  View", self._open_detail_dialog)
+        self._view_btn.pack(side=tk.LEFT, padx=(0, 8))
+        self._paid_btn = make_button(actions, "✔ Mark Paid", self._mark_paid, color=SUCCESS)
+        self._paid_btn.pack(side=tk.LEFT, padx=(0, 8))
+        self._del_btn = make_danger_button(actions, "🗑 Delete", self._delete_invoice)
+        self._del_btn.pack(side=tk.LEFT)
+
+        self._tree.bind("<Double-1>", lambda e: self._open_detail_dialog())
 
         self._load_invoices()
 
@@ -97,6 +103,12 @@ class InvoicesFrame(tk.Frame):
             inv_id = int(sel[0])
             from src.repositories.invoice_repository import InvoiceRepository
             self._selected = InvoiceRepository().find_by_id(inv_id)
+
+    def _open_detail_dialog(self) -> None:
+        if not self._selected:
+            messagebox.showinfo("Select", "Select an invoice first.", parent=self)
+            return
+        InvoiceDetailDialog(self, self._selected, self._svc, on_refresh=self._load_invoices)
 
     def _mark_paid(self) -> None:
         if not self._selected:
@@ -144,13 +156,14 @@ class InvoiceGenerateDialog(tk.Toplevel):
         self.title("Generate Invoice")
         self.resizable(False, False)
         self.configure(bg=BG_DARK)
+        self.wait_visibility()
         self.grab_set()
         self._on_save = on_save
         self._client_svc = client_svc
         self._project_svc = project_svc
         self._invoice_svc = invoice_svc
 
-        w, h = 460, 380
+        w, h = 460, 460
         x = (self.winfo_screenwidth() - w) // 2
         y = (self.winfo_screenheight() - h) // 2
         self.geometry(f"{w}x{h}+{x}+{y}")
@@ -193,11 +206,19 @@ class InvoiceGenerateDialog(tk.Toplevel):
         field_row(body, "Amount (0=auto-calculate)", self._amount_var, bg=BG_DARK)
         field_row(body, "Due in (days)", self._due_days_var, bg=BG_DARK)
 
+        # Preview button and label
+        preview_frame = tk.Frame(body, bg=BG_DARK)
+        preview_frame.pack(fill=tk.X, pady=4)
+        make_button(preview_frame, "🔍 Preview Amount", self._preview, width=15).pack(side=tk.LEFT)
+        self._preview_lbl = tk.Label(preview_frame, text="", font=FONT_SMALL, bg=BG_DARK, fg=SUCCESS, justify="left")
+        self._preview_lbl.pack(side=tk.LEFT, padx=10)
+
         tk.Label(body,
                  text="Amount=0 will use the project's billing strategy to calculate.",
                  font=FONT_SMALL, bg=BG_DARK, fg=FG_MUTED, wraplength=380).pack(anchor="w", pady=(4, 12))
 
         make_button(body, "Generate", self._generate, width=20).pack()
+
 
     def _generate(self) -> None:
         client_str = self._client_combo.get()
@@ -224,3 +245,122 @@ class InvoiceGenerateDialog(tk.Toplevel):
             messagebox.showwarning("Duplicate", str(exc), parent=self)
         except Exception as exc:
             messagebox.showerror("Error", str(exc), parent=self)
+
+    def _preview(self) -> None:
+        project_str = self._project_combo.get()
+        if not project_str:
+            messagebox.showwarning("Validation", "Please select a project.", parent=self)
+            return
+        try:
+            project_id = int(project_str.split(":")[0])
+            strat, exp, total = self._invoice_svc.preview_amount(project_id)
+            self._preview_lbl.config(
+                text=f"Total: {format_currency(total)} (Strategy: {format_currency(strat)} + Exp: {format_currency(exp)})"
+            )
+            if not self._amount_var.get() or float(self._amount_var.get()) == 0.0:
+                self._amount_var.set(f"{total:.2f}")
+        except Exception as exc:
+            messagebox.showerror("Error", str(exc), parent=self)
+
+
+# ====================================================================== #
+# Invoice Detail Dialog                                                   #
+# ====================================================================== #
+
+class InvoiceDetailDialog(tk.Toplevel):
+    """Modal dialog displaying invoice details and calculation breakdown."""
+
+    def __init__(self, parent, invoice: Invoice, service: InvoiceService, on_refresh) -> None:
+        super().__init__(parent)
+        self.title(f"Invoice {invoice.invoice_number}")
+        self.configure(bg=BG_DARK)
+        self.wait_visibility()
+        self.grab_set()
+        self._invoice = invoice
+        self._svc = service
+        self._on_refresh = on_refresh
+
+        w, h = 500, 450
+        x = (self.winfo_screenwidth() - w) // 2
+        y = (self.winfo_screenheight() - h) // 2
+        self.geometry(f"{w}x{h}+{x}+{y}")
+
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        for widget in self.winfo_children():
+            widget.destroy()
+
+        body = tk.Frame(self, bg=BG_DARK, padx=24, pady=20)
+        body.pack(fill=tk.BOTH, expand=True)
+
+        # Header with actions
+        hdr = tk.Frame(body, bg=BG_DARK)
+        hdr.pack(fill=tk.X, pady=(0, 16))
+
+        tk.Label(hdr, text="Invoice Details", font=FONT_H2, bg=BG_DARK, fg=FG_PRIMARY).pack(side=tk.LEFT)
+        make_danger_button(hdr, "🗑 Delete", self._delete).pack(side=tk.RIGHT, padx=4)
+        
+        is_pending = self._invoice.status.lower() == "pending"
+        pay_btn = make_button(hdr, "✔ Mark Paid", self._mark_paid, color=SUCCESS if is_pending else BG_PANEL)
+        pay_btn.pack(side=tk.RIGHT, padx=4)
+        if not is_pending:
+            pay_btn.config(state=tk.DISABLED)
+
+        # Details Grid
+        details = tk.Frame(body, bg=BG_CARD, padx=16, pady=16, highlightthickness=1, highlightbackground=BORDER)
+        details.pack(fill=tk.X, pady=(0, 20))
+
+        from src.services.client_service import ClientService
+        from src.services.project_service import ProjectService
+        client = ClientService().get_by_id(self._invoice.client_id)
+        project = ProjectService().get_project(self._invoice.project_id)
+
+        info = [
+            ("Invoice Number", self._invoice.invoice_number),
+            ("Client", client.full_name if client else "N/A"),
+            ("Project", project.title if project else "N/A"),
+            ("Issue Date", self._invoice.issue_date),
+            ("Due Date", self._invoice.due_date),
+            ("Status", self._invoice.status.upper()),
+            ("Total Amount", format_currency(self._invoice.amount)),
+        ]
+
+        for label, val in info:
+            row_f = tk.Frame(details, bg=BG_CARD)
+            row_f.pack(fill=tk.X, pady=3)
+            tk.Label(row_f, text=f"{label}:", font=FONT_SMALL, bg=BG_CARD, fg=FG_SECONDARY, width=18, anchor="w").pack(side=tk.LEFT)
+            
+            color = FG_PRIMARY
+            if label == "Status":
+                color = SUCCESS if val == "PAID" else WARNING
+            elif label == "Total Amount":
+                color = ACCENT
+            
+            tk.Label(row_f, text=val, font=FONT_BODY, bg=BG_CARD, fg=color).pack(side=tk.LEFT)
+
+        # Breakdown explanation
+        if project:
+            breakdown = tk.Frame(body, bg=BG_DARK)
+            breakdown.pack(fill=tk.X)
+            tk.Label(breakdown, text="Calculation Breakdown Preview:", font=FONT_H3, bg=BG_DARK, fg=FG_PRIMARY).pack(anchor="w", pady=(0, 4))
+            
+            strat, exp, total = self._svc.preview_amount(self._invoice.project_id)
+            desc = f"• Billing Strategy ({project.billing_type.title()}): {format_currency(strat)}\n• Billable Expenses: {format_currency(exp)}"
+            tk.Label(breakdown, text=desc, font=FONT_BODY, bg=BG_DARK, fg=FG_SECONDARY, justify="left", anchor="w").pack(anchor="w")
+
+    def _mark_paid(self) -> None:
+        try:
+            self._svc.mark_paid(self._invoice.invoice_id)
+            self._invoice = self._svc._repo.find_by_id(self._invoice.invoice_id)
+            self._on_refresh()
+            self._build_ui()
+        except Exception as exc:
+            messagebox.showerror("Error", str(exc), parent=self)
+
+    def _delete(self) -> None:
+        if confirm_dialog(self, "Confirm Delete", f"Delete invoice {self._invoice.invoice_number}?"):
+            self._svc.delete(self._invoice.invoice_id)
+            self._on_refresh()
+            self.destroy()
+

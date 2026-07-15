@@ -16,6 +16,22 @@ def validate_email(email: str) -> bool:
     return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email.strip().lower()))
 
 
+def validate_phone(phone: str) -> bool:
+    """Return True if phone is empty or matches a valid international/national pattern.
+
+    Args:
+        phone: The phone number string to test.
+
+    Returns:
+        True if valid or empty, False otherwise.
+    """
+    val = phone.strip()
+    if not val:
+        return True
+    return bool(re.match(r"^(\+?[\d\s\-().]{7,20})$", val))
+
+
+
 def validate_positive_number(value) -> bool:
     """Return True if value can be converted to a non-negative float.
 

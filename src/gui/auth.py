@@ -9,6 +9,7 @@ from tkinter import ttk, messagebox
 
 from src.models.person import Freelancer
 from src.repositories.freelancer_repository import FreelancerRepository
+from src.utils.validators import validate_phone
 from src.gui.theme import (
     BG_DARK, BG_PANEL, BG_CARD, ACCENT, ACCENT_HOVER,
     FG_PRIMARY, FG_SECONDARY, FG_MUTED, BORDER,
@@ -43,11 +44,12 @@ class AuthScreen(tk.Toplevel):
         self.title("Welcome — Freelance Project Manager")
         self.resizable(False, False)
         self.configure(bg=BG_DARK)
+        self.wait_visibility()
         self.grab_set()  # Modal
 
         # Centre on screen
         self.update_idletasks()
-        w, h = 520, 580
+        w, h = 520, 520
         x = (self.winfo_screenwidth() - w) // 2
         y = (self.winfo_screenheight() - h) // 2
         self.geometry(f"{w}x{h}+{x}+{y}")
@@ -87,7 +89,6 @@ class AuthScreen(tk.Toplevel):
             ("Phone", "phone", "e.g. +32 498 12 34 56"),
             ("Profession", "profession", "e.g. Full-Stack Developer"),
             ("Default Hourly Rate ($)", "hourly_rate", "e.g. 75.00"),
-            ("Tax / VAT Number", "tax_number", "e.g. BE0123456789"),
         ]
 
         for label_text, key, placeholder in fields:
@@ -160,7 +161,6 @@ class AuthScreen(tk.Toplevel):
             "phone": "e.g. +32 498 12 34 56",
             "profession": "e.g. Full-Stack Developer",
             "hourly_rate": "e.g. 75.00",
-            "tax_number": "e.g. BE0123456789",
         }
         if val == placeholders.get(key, ""):
             return ""
@@ -177,7 +177,6 @@ class AuthScreen(tk.Toplevel):
         phone = self._get_value("phone")
         profession = self._get_value("profession")
         rate_str = self._get_value("hourly_rate")
-        tax = self._get_value("tax_number")
 
         # Validation
         if not name:
@@ -185,6 +184,9 @@ class AuthScreen(tk.Toplevel):
             return
         if not email:
             messagebox.showwarning("Validation", "Email is required.", parent=self)
+            return
+        if phone and not validate_phone(phone):
+            messagebox.showwarning("Validation", "Phone number is invalid.", parent=self)
             return
 
         try:
@@ -203,7 +205,6 @@ class AuthScreen(tk.Toplevel):
                 phone=phone,
                 profession=profession,
                 hourly_rate=hourly_rate,
-                tax_number=tax,
             )
             self._repo.save(freelancer)
             self.profile = freelancer

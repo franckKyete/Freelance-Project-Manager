@@ -8,6 +8,8 @@ import re
 from abc import ABC, abstractmethod
 from typing import Optional
 
+from src.utils.validators import validate_phone
+
 
 class Person(ABC):
     """Abstract base class representing any person in the system.
@@ -100,7 +102,10 @@ class Person(ABC):
 
     @phone.setter
     def phone(self, value: str) -> None:
-        self.__phone = value.strip()
+        val = value.strip()
+        if val and not validate_phone(val):
+            raise ValueError(f"'{val}' is not a valid phone number.")
+        self.__phone = val
 
     # ------------------------------------------------------------------ #
     # Abstract methods (must be implemented by concrete subclasses)
@@ -137,12 +142,11 @@ class Person(ABC):
 class Freelancer(Person):
     """Represents the freelancer who owns and operates the application.
 
-    Inherits from Person and adds profession, hourly_rate, and tax_number.
+    Inherits from Person and adds profession and hourly_rate.
 
     Attributes (private):
         __profession: The freelancer's field of work.
         __hourly_rate: Standard billing rate per hour (>= 0).
-        __tax_number: Official tax identification number.
     """
 
     def __init__(
@@ -152,7 +156,6 @@ class Freelancer(Person):
         phone: str = "",
         profession: str = "",
         hourly_rate: float = 0.0,
-        tax_number: str = "",
         person_id: int = 0,
     ) -> None:
         """Initialise a Freelancer.
@@ -163,7 +166,6 @@ class Freelancer(Person):
             phone: Phone number (delegated to Person).
             profession: Professional title / field.
             hourly_rate: Default billing rate per hour (must be >= 0).
-            tax_number: Tax/VAT identification number.
             person_id: Database primary key.
 
         Raises:
@@ -172,7 +174,6 @@ class Freelancer(Person):
         super().__init__(full_name, email, phone, person_id)
         self.__profession: str = profession
         self.hourly_rate = hourly_rate  # uses setter for validation
-        self.__tax_number: str = tax_number
 
     # ------------------------------------------------------------------ #
     # Properties
@@ -198,14 +199,6 @@ class Freelancer(Person):
             raise ValueError("hourly_rate cannot be negative.")
         self.__hourly_rate = float(value)
 
-    @property
-    def tax_number(self) -> str:
-        """str: The freelancer's tax identification number."""
-        return self.__tax_number
-
-    @tax_number.setter
-    def tax_number(self, value: str) -> None:
-        self.__tax_number = value.strip()
 
     # ------------------------------------------------------------------ #
     # Concrete implementations of abstract methods
@@ -223,7 +216,6 @@ class Freelancer(Person):
             f"Phone     : {self.phone or 'N/A'}",
             f"Profession: {self.profession or 'N/A'}",
             f"Rate      : ${self.hourly_rate:.2f}/hr",
-            f"Tax No.   : {self.tax_number or 'N/A'}",
         ]
         return "\n".join(lines)
 
@@ -292,7 +284,6 @@ class SeniorFreelancer(Freelancer):
         phone: str = "",
         profession: str = "",
         hourly_rate: float = 0.0,
-        tax_number: str = "",
         years_of_experience: int = 0,
         premium_rate: float = 1.0,
         person_id: int = 0,
@@ -305,7 +296,6 @@ class SeniorFreelancer(Freelancer):
             phone: Phone number.
             profession: Professional title.
             hourly_rate: Base billing rate per hour.
-            tax_number: Tax identification number.
             years_of_experience: Years in the profession (must be >= 0).
             premium_rate: Multiplier applied to hourly_rate (must be >= 1.0).
             person_id: Database primary key.
@@ -314,7 +304,7 @@ class SeniorFreelancer(Freelancer):
             ValueError: If years_of_experience < 0 or premium_rate < 1.0.
         """
         super().__init__(
-            full_name, email, phone, profession, hourly_rate, tax_number, person_id
+            full_name, email, phone, profession, hourly_rate, person_id
         )
         self.years_of_experience = years_of_experience  # uses setter
         self.premium_rate = premium_rate                 # uses setter

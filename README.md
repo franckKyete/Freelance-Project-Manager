@@ -5,7 +5,7 @@ milestones, tasks, time tracking, expenses, invoices, and reports.
 
 **Course:** L3 Génie Logiciel — Programmation Orientée Objet en Python  
 **Professor:** Prof. Patrick Mukala  
-**Author:** _(your name here)_
+**Author:** Franck KIBWE KIETE
 
 ---
 

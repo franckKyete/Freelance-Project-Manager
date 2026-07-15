@@ -9,6 +9,7 @@ from tkinter import ttk, messagebox
 
 from src.models.person import Freelancer
 from src.repositories.freelancer_repository import FreelancerRepository
+from src.utils.validators import validate_phone
 from src.gui.theme import (
     BG_DARK, BG_PANEL, BG_CARD, ACCENT, ACCENT_HOVER,
     FG_PRIMARY, FG_SECONDARY, FG_MUTED, BORDER,
@@ -275,12 +276,13 @@ class SettingsDialog(tk.Toplevel):
         self.title("Settings — Edit Profile")
         self.resizable(False, False)
         self.configure(bg=BG_DARK)
+        self.wait_visibility()
         self.grab_set()
         self._freelancer = freelancer
         self._on_save = on_save
         self._repo = FreelancerRepository()
 
-        w, h = 480, 440
+        w, h = 480, 380
         x = (self.winfo_screenwidth() - w) // 2
         y = (self.winfo_screenheight() - h) // 2
         self.geometry(f"{w}x{h}+{x}+{y}")
@@ -291,7 +293,6 @@ class SettingsDialog(tk.Toplevel):
             "phone": tk.StringVar(value=freelancer.phone),
             "profession": tk.StringVar(value=freelancer.profession),
             "hourly_rate": tk.StringVar(value=str(freelancer.hourly_rate)),
-            "tax_number": tk.StringVar(value=freelancer.tax_number),
         }
         self._build_ui()
 
@@ -309,7 +310,6 @@ class SettingsDialog(tk.Toplevel):
             ("Phone", "phone"),
             ("Profession", "profession"),
             ("Default Hourly Rate ($)", "hourly_rate"),
-            ("Tax / VAT Number", "tax_number"),
         ]
         for label, key in fields:
             field_row(body, label, self._vars[key], bg=BG_DARK)
@@ -323,6 +323,10 @@ class SettingsDialog(tk.Toplevel):
         if not name or not email:
             messagebox.showwarning("Validation", "Name and email are required.", parent=self)
             return
+        phone = self._vars["phone"].get().strip()
+        if phone and not validate_phone(phone):
+            messagebox.showwarning("Validation", "Phone number is invalid.", parent=self)
+            return
         try:
             rate = float(self._vars["hourly_rate"].get() or 0)
         except ValueError:
@@ -331,10 +335,9 @@ class SettingsDialog(tk.Toplevel):
         try:
             self._freelancer.full_name = name
             self._freelancer.email = email
-            self._freelancer.phone = self._vars["phone"].get().strip()
+            self._freelancer.phone = phone
             self._freelancer.profession = self._vars["profession"].get().strip()
             self._freelancer.hourly_rate = rate
-            self._freelancer.tax_number = self._vars["tax_number"].get().strip()
             self._repo.save(self._freelancer)
             self._on_save(self._freelancer)
             self.destroy()

@@ -22,13 +22,13 @@ class FreelancerRepository:
                 """
                 INSERT OR REPLACE INTO freelancer_profile
                     (id, full_name, email, phone, profession, hourly_rate,
-                     tax_number, years_of_experience, is_senior)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     years_of_experience, is_senior)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     self.PROFILE_ID, freelancer.full_name, freelancer.email,
                     freelancer.phone, freelancer.profession, freelancer.hourly_rate,
-                    freelancer.tax_number, yoe, int(is_senior),
+                    yoe, int(is_senior),
                 ),
             )
             db.commit()
@@ -61,7 +61,6 @@ class FreelancerRepository:
                 phone=row["phone"],
                 profession=row["profession"],
                 hourly_rate=row["hourly_rate"],
-                tax_number=row["tax_number"],
                 years_of_experience=row["years_of_experience"],
                 person_id=row["id"],
             )
@@ -71,7 +70,6 @@ class FreelancerRepository:
             phone=row["phone"],
             profession=row["profession"],
             hourly_rate=row["hourly_rate"],
-            tax_number=row["tax_number"],
             person_id=row["id"],
         )
 

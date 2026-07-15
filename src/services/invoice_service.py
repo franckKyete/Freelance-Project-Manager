@@ -59,11 +59,7 @@ class InvoiceService:
 
             # Auto-calculate if amount not specified
             if amount == 0.0:
-                project = self._project_repo.find_by_id(project_id)
-                if project:
-                    strategy = get_strategy(project.billing_type)
-                    project.billing_strategy = strategy
-                    amount = project.calculate_invoice_amount()
+                _, _, amount = self.preview_amount(project_id)
 
             invoice = Invoice(
                 invoice_number=invoice_number,
@@ -80,6 +76,44 @@ class InvoiceService:
             raise RuntimeError(f"Failed to generate invoice: {exc}") from exc
         finally:
             pass  # logging hook
+
+    def preview_amount(self, project_id: int) -> tuple[float, float, float]:
+        """Preview invoice amount breakdown (strategy, expenses, total).
+
+        Returns:
+            Tuple: (strategy_amount, billable_expenses, total_amount)
+        """
+        project = self._project_repo.find_by_id(project_id)
+        if not project:
+            return 0.0, 0.0, 0.0
+
+        try:
+            from src.repositories.milestone_repository import MilestoneRepository
+            from src.repositories.task_repository import TaskRepository
+            from src.repositories.expense_repository import ExpenseRepository
+            
+            ms_repo = MilestoneRepository()
+            task_repo = TaskRepository()
+            exp_repo = ExpenseRepository()
+            
+            milestones = ms_repo.find_by_project(project_id)
+            for m in milestones:
+                tasks = task_repo.find_by_milestone(m.milestone_id)
+                for t in tasks:
+                    m.add_task(t)
+                project.add_milestone(m)
+            
+            strategy = get_strategy(project.billing_type)
+            project.billing_strategy = strategy
+            strategy_amount = project.calculate_invoice_amount()
+            
+            expenses = exp_repo.find_by_project(project_id)
+            billable_expenses = sum(e.amount for e in expenses if e.is_billable())
+            
+            return strategy_amount, billable_expenses, strategy_amount + billable_expenses
+        except Exception as exc:
+            raise RuntimeError(f"Failed to preview invoice amount: {exc}") from exc
+
 
     def mark_paid(self, invoice_id: int) -> Invoice:
         """Mark an invoice as paid.

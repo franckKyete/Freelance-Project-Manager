@@ -4,8 +4,10 @@ import tkinter as tk
 from tkinter import messagebox
 
 from src.services.client_service import ClientService
+from src.services.project_service import ProjectService
 from src.models.client import Client
 from src.exceptions.app_exceptions import ClientNotFoundException
+from src.utils.validators import validate_phone, format_currency
 from src.gui.theme import (
     BG_DARK, BG_PANEL, BG_CARD, ACCENT, DANGER,
     FG_PRIMARY, FG_SECONDARY, FG_MUTED, BORDER,
@@ -49,10 +51,14 @@ class ClientsFrame(tk.Frame):
         # ── Action bar ────────────────────────────────────────────────
         actions = tk.Frame(self, bg=BG_DARK, pady=10)
         actions.pack(fill=tk.X)
+        self._view_btn = make_button(actions, "👁  View", self._open_detail_dialog)
+        self._view_btn.pack(side=tk.LEFT, padx=(0, 8))
         self._edit_btn = make_button(actions, "✏  Edit", self._open_edit_dialog)
         self._edit_btn.pack(side=tk.LEFT, padx=(0, 8))
         self._del_btn = make_danger_button(actions, "🗑  Delete", self._delete_client)
         self._del_btn.pack(side=tk.LEFT)
+
+        self._tree.bind("<Double-1>", lambda e: self._open_detail_dialog())
 
         self._load_clients()
 
@@ -87,6 +93,12 @@ class ClientsFrame(tk.Frame):
 
     def _open_add_dialog(self) -> None:
         ClientFormDialog(self, title="Add Client", on_save=self._save_client)
+
+    def _open_detail_dialog(self) -> None:
+        if not self._selected_client:
+            messagebox.showinfo("Select Client", "Please select a client first.", parent=self)
+            return
+        ClientDetailDialog(self, self._selected_client, self._svc, on_refresh=self._load_clients)
 
     def _open_edit_dialog(self) -> None:
         if not self._selected_client:
@@ -149,6 +161,7 @@ class ClientFormDialog(tk.Toplevel):
         self.title(title)
         self.resizable(False, False)
         self.configure(bg=BG_DARK)
+        self.wait_visibility()
         self.grab_set()
         self._on_save = on_save
         self._client = client
@@ -208,7 +221,107 @@ class ClientFormDialog(tk.Toplevel):
         if not data["full_name"] or not data["email"]:
             messagebox.showwarning("Validation", "Name and email are required.", parent=self)
             return
+        if data["phone"] and not validate_phone(data["phone"]):
+            messagebox.showwarning("Validation", "Phone number is invalid.", parent=self)
+            return
         if self._client:
             data["id"] = self._client.id
         self._on_save(data)
         self.destroy()
+
+
+# ====================================================================== #
+# Client Detail Dialog                                                     #
+# ====================================================================== #
+
+class ClientDetailDialog(tk.Toplevel):
+    """Modal dialog displaying client details and their projects."""
+
+    def __init__(self, parent, client: Client, service: ClientService, on_refresh) -> None:
+        super().__init__(parent)
+        self.title("Client Details")
+        self.configure(bg=BG_DARK)
+        self.wait_visibility()
+        self.grab_set()
+        self._client = client
+        self._svc = service
+        self._on_refresh = on_refresh
+        self._project_svc = ProjectService()
+
+        w, h = 600, 500
+        x = (self.winfo_screenwidth() - w) // 2
+        y = (self.winfo_screenheight() - h) // 2
+        self.geometry(f"{w}x{h}+{x}+{y}")
+
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        for widget in self.winfo_children():
+            widget.destroy()
+
+        body = tk.Frame(self, bg=BG_DARK, padx=24, pady=20)
+        body.pack(fill=tk.BOTH, expand=True)
+
+        # Header with buttons
+        hdr = tk.Frame(body, bg=BG_DARK)
+        hdr.pack(fill=tk.X, pady=(0, 16))
+
+        tk.Label(hdr, text="Client Profile", font=FONT_H2, bg=BG_DARK, fg=FG_PRIMARY).pack(side=tk.LEFT)
+        make_danger_button(hdr, "🗑 Delete", self._delete).pack(side=tk.RIGHT, padx=4)
+        make_button(hdr, "✏ Edit", self._edit).pack(side=tk.RIGHT, padx=4)
+
+        # Details Grid
+        details = tk.Frame(body, bg=BG_CARD, padx=16, pady=16, highlightthickness=1, highlightbackground=BORDER)
+        details.pack(fill=tk.X, pady=(0, 20))
+
+        info = [
+            ("Full Name", self._client.full_name),
+            ("Company", self._client.company_name or "N/A"),
+            ("Email", self._client.email),
+            ("Phone", self._client.phone or "N/A"),
+            ("Address", self._client.address or "N/A"),
+            ("Preferred Payment", self._client.preferred_payment_method),
+        ]
+
+        # Use packed frames for clean display
+        for label, val in info:
+            row_f = tk.Frame(details, bg=BG_CARD)
+            row_f.pack(fill=tk.X, pady=2)
+            tk.Label(row_f, text=f"{label}:", font=FONT_SMALL, bg=BG_CARD, fg=FG_SECONDARY, width=18, anchor="w").pack(side=tk.LEFT)
+            tk.Label(row_f, text=val, font=FONT_BODY, bg=BG_CARD, fg=FG_PRIMARY).pack(side=tk.LEFT)
+
+        # Projects section
+        tk.Label(body, text="Projects", font=FONT_H3, bg=BG_DARK, fg=FG_PRIMARY).pack(anchor="w", pady=(0, 8))
+        cols = ["ID", "Title", "Status", "Budget"]
+        tree_frame, self._proj_tree = make_scrolled_tree(body, cols, heights=6)
+        tree_frame.pack(fill=tk.BOTH, expand=True)
+        for col, w in zip(cols, [30, 280, 100, 110]):
+            self._proj_tree.column(col, width=w)
+
+        # Load projects
+        projects = [p for p in self._project_svc.get_all_projects() if p.client_id == self._client.id]
+        for p in projects:
+            self._proj_tree.insert("", tk.END, values=(
+                p.project_id, p.title, p.status.title(), format_currency(p.budget)
+            ))
+
+    def _edit(self) -> None:
+        def on_save_client_edit(data: dict) -> None:
+            self._client.full_name = data["full_name"]
+            self._client.email = data["email"]
+            self._client.phone = data["phone"]
+            self._client.company_name = data["company_name"]
+            self._client.address = data["address"]
+            self._client.preferred_payment_method = data["payment"]
+            self._svc.update(self._client)
+            self._on_refresh()
+            self._build_ui()
+
+        ClientFormDialog(self, title="Edit Client", client=self._client, on_save=on_save_client_edit)
+
+    def _delete(self) -> None:
+        if confirm_dialog(self, "Confirm Delete", f"Delete client '{self._client.full_name}'?\nAll projects will be affected."):
+            self._svc.delete(self._client.id)
+            self._on_refresh()
+            self.destroy()
+

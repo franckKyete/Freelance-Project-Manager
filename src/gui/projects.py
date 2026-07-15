@@ -177,12 +177,15 @@ class ProjectsFrame(tk.Frame):
         for col, w in zip(cols, [30, 180, 100, 90, 80]):
             tree.column(col, width=w)
 
+        tree.bind("<Double-1>", lambda e, t=tree, p=proj: self._open_milestone_detail(t, p))
+
         milestones = self._svc.get_milestones(proj.project_id)
         for m in milestones:
             tree.insert("", tk.END, values=(
                 m.milestone_id, m.title, m.due_date or "N/A",
                 m.status.title(), f"{m.calculate_progress()*100:.0f}%",
             ))
+
 
     def _build_expenses(self, frame: tk.Frame, proj: Project) -> None:
         header = tk.Frame(frame, bg=BG_DARK, padx=CARD_PAD, pady=8)
@@ -197,6 +200,8 @@ class ProjectsFrame(tk.Frame):
         for col, w in zip(cols, [30, 100, 180, 90, 100, 70]):
             tree.column(col, width=w)
 
+        tree.bind("<Double-1>", lambda e, t=tree, p=proj: self._open_expense_detail(t, p))
+
         expenses = self._svc.get_expenses(proj.project_id)
         total = sum(e.amount for e in expenses)
         for e in expenses:
@@ -205,6 +210,7 @@ class ProjectsFrame(tk.Frame):
                 format_currency(e.amount), e.date,
                 "Yes" if e.is_billable() else "No",
             ))
+
 
         tk.Label(frame, text=f"Total: {format_currency(total)}",
                  font=FONT_H3, bg=BG_DARK, fg=ACCENT_2).pack(anchor="e", padx=CARD_PAD, pady=4)
@@ -274,6 +280,24 @@ class ProjectsFrame(tk.Frame):
         ExpenseDialog(self, proj.project_id, self._svc,
                       on_save=lambda: self._show_detail())
 
+    def _open_milestone_detail(self, tree, project: Project) -> None:
+        sel = tree.selection()
+        if sel:
+            mid = int(sel[0])
+            milestones = self._svc.get_milestones(project.project_id)
+            ms = next((m for m in milestones if m.milestone_id == mid), None)
+            if ms:
+                MilestoneDetailDialog(self, ms, project, self._svc, on_refresh=lambda: self._show_detail())
+
+    def _open_expense_detail(self, tree, project: Project) -> None:
+        sel = tree.selection()
+        if sel:
+            eid = int(sel[0])
+            expenses = self._svc.get_expenses(project.project_id)
+            exp = next((e for e in expenses if e.expense_id == eid), None)
+            if exp:
+                ExpenseDetailDialog(self, exp, project, self._svc, on_refresh=lambda: self._show_detail())
+
     def refresh(self) -> None:
         self._load_projects()
         self._show_placeholder()
@@ -291,6 +315,7 @@ class ProjectFormDialog(tk.Toplevel):
         self.title("Edit Project" if project else "New Project")
         self.resizable(False, False)
         self.configure(bg=BG_DARK)
+        self.wait_visibility()
         self.grab_set()
         self._on_save = on_save
         self._project = project
@@ -384,6 +409,7 @@ class MilestoneDialog(tk.Toplevel):
         self.title("Add Milestone")
         self.resizable(False, False)
         self.configure(bg=BG_DARK)
+        self.wait_visibility()
         self.grab_set()
         self._pid = project_id
         self._svc = svc
@@ -422,6 +448,7 @@ class ExpenseDialog(tk.Toplevel):
         self.title("Add Expense")
         self.resizable(False, False)
         self.configure(bg=BG_DARK)
+        self.wait_visibility()
         self.grab_set()
         self._pid = project_id
         self._svc = svc
@@ -479,3 +506,210 @@ class ExpenseDialog(tk.Toplevel):
             self.destroy()
         except Exception as exc:
             messagebox.showerror("Error", str(exc), parent=self)
+
+
+# ====================================================================== #
+# Milestone Detail Dialog                                                  #
+# ====================================================================== #
+
+class MilestoneDetailDialog(tk.Toplevel):
+    """Modal dialog displaying milestone details and its tasks."""
+
+    def __init__(self, parent, milestone, project: Project, service: ProjectService, on_refresh) -> None:
+        super().__init__(parent)
+        self.title(f"Milestone: {milestone.title}")
+        self.configure(bg=BG_DARK)
+        self.wait_visibility()
+        self.grab_set()
+        self._milestone = milestone
+        self._project = project
+        self._svc = service
+        self._on_refresh = on_refresh
+
+        w, h = 600, 480
+        x = (self.winfo_screenwidth() - w) // 2
+        y = (self.winfo_screenheight() - h) // 2
+        self.geometry(f"{w}x{h}+{x}+{y}")
+
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        for widget in self.winfo_children():
+            widget.destroy()
+
+        body = tk.Frame(self, bg=BG_DARK, padx=20, pady=20)
+        body.pack(fill=tk.BOTH, expand=True)
+
+        hdr = tk.Frame(body, bg=BG_DARK)
+        hdr.pack(fill=tk.X, pady=(0, 16))
+
+        tk.Label(hdr, text="Milestone Details", font=FONT_H2, bg=BG_DARK, fg=FG_PRIMARY).pack(side=tk.LEFT)
+        make_danger_button(hdr, "🗑 Delete", self._delete).pack(side=tk.RIGHT, padx=4)
+        make_button(hdr, "✏ Edit", self._edit).pack(side=tk.RIGHT, padx=4)
+        make_button(hdr, "+ Add Task", self._add_task).pack(side=tk.RIGHT, padx=4)
+
+        # Details Card
+        details = tk.Frame(body, bg=BG_CARD, padx=16, pady=16, highlightthickness=1, highlightbackground=BORDER)
+        details.pack(fill=tk.X, pady=(0, 20))
+
+        info = [
+            ("Title", self._milestone.title),
+            ("Due Date", self._milestone.due_date or "N/A"),
+            ("Status", self._milestone.status.title()),
+            ("Progress", f"{self._milestone.calculate_progress()*100:.0f}%"),
+        ]
+
+        for label, val in info:
+            row_f = tk.Frame(details, bg=BG_CARD)
+            row_f.pack(fill=tk.X, pady=2)
+            tk.Label(row_f, text=f"{label}:", font=FONT_SMALL, bg=BG_CARD, fg=FG_SECONDARY, width=15, anchor="w").pack(side=tk.LEFT)
+            tk.Label(row_f, text=val, font=FONT_BODY, bg=BG_CARD, fg=FG_PRIMARY).pack(side=tk.LEFT)
+
+        # Tasks section
+        tk.Label(body, text="Tasks", font=FONT_H3, bg=BG_DARK, fg=FG_PRIMARY).pack(anchor="w", pady=(0, 8))
+        cols = ["ID", "Title", "Type", "Priority", "Status", "Progress"]
+        tree_frame, self._task_tree = make_scrolled_tree(body, cols, heights=6)
+        tree_frame.pack(fill=tk.BOTH, expand=True)
+        for col, w in zip(cols, [30, 220, 80, 80, 80, 70]):
+            self._task_tree.column(col, width=w)
+
+        # Load tasks
+        from src.services.task_service import TaskService
+        tasks = TaskService().get_tasks_for_milestone(self._milestone.milestone_id)
+        for t in tasks:
+            self._task_tree.insert("", tk.END, values=(
+                t.task_id, t.title, t.TASK_TYPE.title(), t.priority.title(), t.status.replace("_", " ").title(), f"{t.get_progress()*100:.0f}%"
+            ))
+
+    def _edit(self) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title("Edit Milestone")
+        dialog.geometry(f"360x200+{(self.winfo_screenwidth()-360)//2}+{(self.winfo_screenheight()-200)//2}")
+        dialog.configure(bg=BG_DARK)
+        dialog.wait_visibility()
+        dialog.grab_set()
+
+        body = tk.Frame(dialog, bg=BG_DARK, padx=20, pady=20)
+        body.pack(fill=tk.BOTH, expand=True)
+
+        title_var = tk.StringVar(value=self._milestone.title)
+        date_var = tk.StringVar(value=self._milestone.due_date)
+
+        field_row(body, "Title *", title_var, bg=BG_DARK)
+        field_row(body, "Due Date (YYYY-MM-DD)", date_var, bg=BG_DARK)
+
+        def save_ms() -> None:
+            t = title_var.get().strip()
+            if not t:
+                messagebox.showwarning("Validation", "Title required.", parent=dialog)
+                return
+            self._milestone.title = t
+            self._milestone.due_date = date_var.get().strip()
+            self._svc.update_milestone(self._milestone)
+            self._on_refresh()
+            self._build_ui()
+            dialog.destroy()
+
+        make_button(body, "Save", save_ms).pack(pady=10)
+
+    def _add_task(self) -> None:
+        from src.gui.tasks import TaskFormDialog
+        from src.services.task_service import TaskService
+        
+        def on_task_added() -> None:
+            self._build_ui()
+            self._on_refresh()
+
+        TaskFormDialog(self, self._svc, TaskService(), on_task_added)
+
+    def _delete(self) -> None:
+        if confirm_dialog(self, "Confirm Delete", f"Delete milestone '{self._milestone.title}'?"):
+            self._svc.delete_milestone(self._milestone.milestone_id)
+            self._on_refresh()
+            self.destroy()
+
+
+# ====================================================================== #
+# Expense Detail Dialog                                                    #
+# ====================================================================== #
+
+class ExpenseDetailDialog(tk.Toplevel):
+    """Modal dialog displaying expense details and allowing inline edits/delete."""
+
+    def __init__(self, parent, expense, project: Project, service: ProjectService, on_refresh) -> None:
+        super().__init__(parent)
+        self.title("Expense Details")
+        self.configure(bg=BG_DARK)
+        self.wait_visibility()
+        self.grab_set()
+        self._expense = expense
+        self._project = project
+        self._svc = service
+        self._on_refresh = on_refresh
+
+        w, h = 420, 320
+        x = (self.winfo_screenwidth() - w) // 2
+        y = (self.winfo_screenheight() - h) // 2
+        self.geometry(f"{w}x{h}+{x}+{y}")
+
+        self._vars = {k: tk.StringVar() for k in ["category", "description", "amount", "date"]}
+        self._vars["category"].set(expense.category)
+        self._vars["description"].set(expense.description)
+        self._vars["amount"].set(str(expense.amount))
+        self._vars["date"].set(expense.date)
+        self._billable_var = tk.BooleanVar(value=expense.is_billable())
+
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        body = tk.Frame(self, bg=BG_DARK, padx=24, pady=20)
+        body.pack(fill=tk.BOTH, expand=True)
+
+        tk.Label(body, text="Edit Expense", font=FONT_H2, bg=BG_DARK, fg=FG_PRIMARY).pack(anchor="w", pady=(0, 12))
+
+        cat_row = tk.Frame(body, bg=BG_DARK)
+        cat_row.pack(fill=tk.X, pady=4)
+        tk.Label(cat_row, text="Category", font=FONT_SMALL, bg=BG_DARK, fg=FG_SECONDARY, width=22, anchor="w").pack(side=tk.LEFT)
+        from src.models.expense import EXPENSE_CATEGORIES
+        make_combobox(cat_row, list(EXPENSE_CATEGORIES), self._vars["category"]).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        field_row(body, "Description", self._vars["description"], bg=BG_DARK)
+        field_row(body, "Amount ($) *", self._vars["amount"], bg=BG_DARK)
+        field_row(body, "Date (YYYY-MM-DD)", self._vars["date"], bg=BG_DARK)
+
+        bill_row = tk.Frame(body, bg=BG_DARK)
+        bill_row.pack(fill=tk.X, pady=4)
+        tk.Checkbutton(bill_row, text="Billable to client", variable=self._billable_var, bg=BG_DARK, fg=FG_PRIMARY, selectcolor=BG_CARD, activebackground=BG_DARK, font=FONT_SMALL).pack(anchor="w")
+
+        btn_row = tk.Frame(body, bg=BG_DARK, pady=10)
+        btn_row.pack(fill=tk.X)
+        
+        make_danger_button(btn_row, "🗑 Delete", self._delete).pack(side=tk.RIGHT, padx=4)
+        make_button(btn_row, "Save", self._save).pack(side=tk.RIGHT, padx=4)
+
+    def _save(self) -> None:
+        try:
+            amount = float(self._vars["amount"].get())
+        except ValueError:
+            messagebox.showwarning("Validation", "Amount must be a number.", parent=self)
+            return
+        try:
+            self._expense.category = self._vars["category"].get()
+            self._expense.description = self._vars["description"].get().strip()
+            self._expense.amount = amount
+            self._expense.date = self._vars["date"].get().strip()
+            self._expense.set_billable(self._billable_var.get())
+            
+            from src.repositories.expense_repository import ExpenseRepository
+            ExpenseRepository().save(self._expense)
+            
+            self._on_refresh()
+            self.destroy()
+        except Exception as exc:
+            messagebox.showerror("Error", str(exc), parent=self)
+
+    def _delete(self) -> None:
+        if confirm_dialog(self, "Confirm Delete", "Delete this expense record?"):
+            self._svc.delete_expense(self._expense.expense_id)
+            self._on_refresh()
+            self.destroy()

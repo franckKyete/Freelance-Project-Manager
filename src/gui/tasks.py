@@ -10,7 +10,7 @@ from src.factories.task_factory import TaskFactory
 from src.models.task import Task
 from src.gui.theme import (
     BG_DARK, BG_CARD, BG_PANEL, ACCENT, SUCCESS, WARNING, DANGER,
-    FG_PRIMARY, FG_SECONDARY, FG_MUTED,
+    FG_PRIMARY, FG_SECONDARY, FG_MUTED, BORDER,
     FONT_H2, FONT_H3, FONT_BODY, FONT_SMALL,
     CONTENT_PAD, CARD_PAD,
 )
@@ -80,8 +80,11 @@ class TasksFrame(tk.Frame):
 
         action_bar = tk.Frame(top, bg=BG_CARD, pady=4)
         action_bar.pack(fill=tk.X, padx=4)
+        make_button(action_bar, "👁 View", self._open_detail_dialog).pack(side=tk.LEFT, padx=2)
         make_button(action_bar, "✔ Complete", self._complete_task).pack(side=tk.LEFT, padx=2)
         make_danger_button(action_bar, "🗑 Delete", self._delete_task).pack(side=tk.LEFT, padx=2)
+
+        self._tree.bind("<Double-1>", lambda e: self._open_detail_dialog())
 
         # ── Bottom: time tracker ──────────────────────────────────────
         bottom = tk.Frame(panes, bg=BG_DARK, padx=CARD_PAD, pady=CARD_PAD)
@@ -230,6 +233,12 @@ class TasksFrame(tk.Frame):
         TaskFormDialog(self, self._project_svc, self._task_svc,
                        on_save=lambda: self._load_tasks())
 
+    def _open_detail_dialog(self) -> None:
+        if not self._selected_task:
+            messagebox.showinfo("Select", "Select a task first.", parent=self)
+            return
+        TaskDetailDialog(self, self._selected_task, self._task_svc, on_refresh=self._load_tasks)
+
     def _complete_task(self) -> None:
         if not self._selected_task:
             messagebox.showinfo("Select", "Select a task first.", parent=self)
@@ -264,18 +273,20 @@ class TasksFrame(tk.Frame):
 # ====================================================================== #
 
 class TaskFormDialog(tk.Toplevel):
-    """Modal for creating a new task."""
+    """Modal for creating / editing a task."""
 
     def __init__(self, parent, project_svc: ProjectService,
-                 task_svc: TaskService, on_save) -> None:
+                 task_svc: TaskService, on_save, task: Task = None) -> None:
         super().__init__(parent)
-        self.title("New Task")
+        self.title("Edit Task" if task else "New Task")
         self.resizable(False, False)
         self.configure(bg=BG_DARK)
+        self.wait_visibility()
         self.grab_set()
         self._task_svc = task_svc
         self._project_svc = project_svc
         self._on_save = on_save
+        self._task = task
 
         w, h = 500, 520
         x = (self.winfo_screenwidth() - w) // 2
@@ -286,12 +297,23 @@ class TaskFormDialog(tk.Toplevel):
                       ["title", "description", "estimated_hours", "priority",
                        "task_type", "programming_language", "api_type",
                        "software_used", "word_target"]}
-        self._vars["priority"].set("medium")
-        self._vars["task_type"].set("development")
-        self._vars["programming_language"].set("Python")
-        self._vars["api_type"].set("REST")
-        self._vars["software_used"].set("Figma")
-        self._vars["estimated_hours"].set("0")
+        if task:
+            self._vars["title"].set(task.title)
+            self._vars["description"].set(task.description)
+            self._vars["estimated_hours"].set(str(task.estimated_hours))
+            self._vars["priority"].set(task.priority)
+            self._vars["task_type"].set(task.TASK_TYPE)
+            if hasattr(task, "programming_language"):
+                self._vars["programming_language"].set(task.programming_language)
+            if hasattr(task, "api_type"):
+                self._vars["api_type"].set(task.api_type)
+        else:
+            self._vars["priority"].set("medium")
+            self._vars["task_type"].set("development")
+            self._vars["programming_language"].set("Python")
+            self._vars["api_type"].set("REST")
+            self._vars["software_used"].set("Figma")
+            self._vars["estimated_hours"].set("0")
 
         self._projects = project_svc.get_all_projects()
         self._milestones = []
@@ -371,11 +393,16 @@ class TaskFormDialog(tk.Toplevel):
         if not title:
             messagebox.showwarning("Validation", "Title required.", parent=self)
             return
-        ms_name = self._ms_var.get()
-        ms = next((m for m in self._milestones if m.title == ms_name), None)
-        if not ms:
-            messagebox.showwarning("Validation", "Please select a milestone.", parent=self)
-            return
+        
+        # Milestone check is only required for new tasks
+        ms = None
+        if not self._task:
+            ms_name = self._ms_var.get()
+            ms = next((m for m in self._milestones if m.title == ms_name), None)
+            if not ms:
+                messagebox.showwarning("Validation", "Please select a milestone.", parent=self)
+                return
+
         task_type = self._vars["task_type"].get()
         try:
             kwargs = dict(
@@ -388,8 +415,228 @@ class TaskFormDialog(tk.Toplevel):
                 kwargs["programming_language"] = self._vars["programming_language"].get() or "Python"
             if task_type == "backend":
                 kwargs["api_type"] = self._vars["api_type"].get() or "REST"
-            self._task_svc.create_task(task_type, ms.milestone_id, **kwargs)
+            
+            if self._task:
+                self._task.title = kwargs["title"]
+                self._task.description = kwargs["description"]
+                self._task.estimated_hours = kwargs["estimated_hours"]
+                self._task.priority = kwargs["priority"]
+                if hasattr(self._task, "programming_language"):
+                    self._task.programming_language = kwargs.get("programming_language", "Python")
+                if hasattr(self._task, "api_type"):
+                    self._task.api_type = kwargs.get("api_type", "REST")
+                self._task_svc._task_repo.save(self._task)
+            else:
+                self._task_svc.create_task(task_type, ms.milestone_id, **kwargs)
+
             self._on_save()
             self.destroy()
         except Exception as exc:
             messagebox.showerror("Error", str(exc), parent=self)
+
+
+# ====================================================================== #
+# Task Detail Dialog                                                      #
+# ====================================================================== #
+
+class TaskDetailDialog(tk.Toplevel):
+    """Modal dialog displaying task details, live timer, and time entries."""
+
+    def __init__(self, parent, task: Task, service: TaskService, on_refresh) -> None:
+        super().__init__(parent)
+        self.title(f"Task: {task.title}")
+        self.configure(bg=BG_DARK)
+        self.wait_visibility()
+        self.grab_set()
+        self._task = task
+        self._svc = service
+        self._on_refresh = on_refresh
+        
+        self._timer_running = False
+        self._timer_start = None
+        self._timer_id = None
+
+        w, h = 750, 520
+        x = (self.winfo_screenwidth() - w) // 2
+        y = (self.winfo_screenheight() - h) // 2
+        self.geometry(f"{w}x{h}+{x}+{y}")
+
+        self._build_ui()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _build_ui(self) -> None:
+        for widget in self.winfo_children():
+            widget.destroy()
+
+        body = tk.Frame(self, bg=BG_DARK, padx=20, pady=20)
+        body.pack(fill=tk.BOTH, expand=True)
+
+        # Header with actions
+        hdr = tk.Frame(body, bg=BG_DARK)
+        hdr.pack(fill=tk.X, pady=(0, 16))
+
+        tk.Label(hdr, text="Task Details", font=FONT_H2, bg=BG_DARK, fg=FG_PRIMARY).pack(side=tk.LEFT)
+        make_danger_button(hdr, "🗑 Delete", self._delete).pack(side=tk.RIGHT, padx=4)
+        make_button(hdr, "✏ Edit", self._edit).pack(side=tk.RIGHT, padx=4)
+        
+        is_todo = self._task.status.lower() != "completed"
+        complete_btn = make_button(hdr, "✔ Mark Done", self._mark_done, color=SUCCESS if is_todo else BG_PANEL)
+        complete_btn.pack(side=tk.RIGHT, padx=4)
+        if not is_todo:
+            complete_btn.config(state=tk.DISABLED)
+
+        # Split left (details) and right (timer/logs)
+        split = tk.Frame(body, bg=BG_DARK)
+        split.pack(fill=tk.BOTH, expand=True)
+        
+        left = tk.Frame(split, bg=BG_DARK, width=320)
+        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+        
+        right = tk.Frame(split, bg=BG_DARK, width=380)
+        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0))
+
+        # Left: Details Card
+        details = tk.Frame(left, bg=BG_CARD, padx=16, pady=16, highlightthickness=1, highlightbackground=BORDER)
+        details.pack(fill=tk.BOTH, expand=True)
+
+        info = [
+            ("Title", self._task.title),
+            ("Type", self._task.TASK_TYPE.title()),
+            ("Priority", self._task.priority.title()),
+            ("Status", self._task.status.replace("_", " ").title()),
+            ("Est. Hours", f"{self._task.estimated_hours:.1f}h"),
+            ("Logged Hours", f"{self._task.completed_hours:.1f}h"),
+            ("Progress", f"{self._task.get_progress()*100:.0f}%"),
+        ]
+
+        if hasattr(self._task, "programming_language"):
+            info.append(("Language", self._task.programming_language))
+        if hasattr(self._task, "api_type"):
+            info.append(("API Type", self._task.api_type))
+
+        for label, val in info:
+            row_f = tk.Frame(details, bg=BG_CARD)
+            row_f.pack(fill=tk.X, pady=3)
+            tk.Label(row_f, text=f"{label}:", font=FONT_SMALL, bg=BG_CARD, fg=FG_SECONDARY, width=15, anchor="w").pack(side=tk.LEFT)
+            
+            color = FG_PRIMARY
+            if label == "Status":
+                color = SUCCESS if "completed" in val.lower() else WARNING
+            elif label == "Progress":
+                color = ACCENT
+            
+            tk.Label(row_f, text=val, font=FONT_BODY, bg=BG_CARD, fg=color).pack(side=tk.LEFT)
+
+        if self._task.description:
+            tk.Label(details, text="Description:", font=FONT_SMALL, bg=BG_CARD, fg=FG_SECONDARY).pack(anchor="w", pady=(10, 2))
+            desc_lbl = tk.Label(details, text=self._task.description, font=FONT_BODY, bg=BG_CARD, fg=FG_PRIMARY, wraplength=280, justify="left")
+            desc_lbl.pack(anchor="w")
+
+        # Right: Timer & Entries
+        timer_card = tk.Frame(right, bg=BG_CARD, padx=16, pady=16, highlightthickness=1, highlightbackground=BORDER)
+        timer_card.pack(fill=tk.X, pady=(0, 16))
+        
+        tk.Label(timer_card, text="⏱  Time Tracker", font=FONT_H3, bg=BG_CARD, fg=FG_PRIMARY).pack(anchor="w")
+        self._timer_label = tk.Label(timer_card, text="00:00:00", font=("Courier New", 24, "bold"), bg=BG_CARD, fg=ACCENT)
+        self._timer_label.pack(pady=4)
+        
+        btn_row = tk.Frame(timer_card, bg=BG_CARD)
+        btn_row.pack(pady=4)
+        
+        self._start_btn = make_button(btn_row, "▶ Start Task", self._start_timer, color=SUCCESS)
+        self._start_btn.pack(side=tk.LEFT, padx=4)
+        
+        self._stop_btn = make_button(btn_row, "■ Stop", self._stop_timer, color=DANGER)
+        self._stop_btn.pack(side=tk.LEFT, padx=4)
+        self._stop_btn.config(state=tk.DISABLED)
+        
+        if not is_todo:
+            self._start_btn.config(state=tk.DISABLED)
+
+        # Time entries logs
+        tk.Label(right, text="Time Logs", font=FONT_H3, bg=BG_DARK, fg=FG_PRIMARY).pack(anchor="w", pady=(4, 4))
+        te_cols = ["Start", "End", "Duration"]
+        te_frame, self._te_tree = make_scrolled_tree(right, te_cols, heights=5)
+        te_frame.pack(fill=tk.BOTH, expand=True)
+        for col, w in zip(te_cols, [130, 130, 80]):
+            self._te_tree.column(col, width=w)
+
+        self._load_time_entries()
+
+    def _load_time_entries(self) -> None:
+        for row in self._te_tree.get_children():
+            self._te_tree.delete(row)
+        entries = self._svc.get_time_entries(self._task.task_id)
+        for e in entries:
+            self._te_tree.insert("", tk.END, values=(
+                e.start_time, e.end_time, format_hours(e.duration),
+            ))
+
+    def _start_timer(self) -> None:
+        if not self._timer_running:
+            self._timer_running = True
+            self._timer_start = datetime.now()
+            self._start_btn.config(state=tk.DISABLED)
+            self._stop_btn.config(state=tk.NORMAL)
+            self._tick()
+
+    def _tick(self) -> None:
+        if self._timer_running:
+            elapsed = datetime.now() - self._timer_start
+            h, rem = divmod(int(elapsed.total_seconds()), 3600)
+            m, s = divmod(rem, 60)
+            self._timer_label.config(text=f"{h:02d}:{m:02d}:{s:02d}")
+            self._timer_id = self.after(1000, self._tick)
+
+    def _stop_timer(self) -> None:
+        if self._timer_running:
+            self._timer_running = False
+            if self._timer_id:
+                self.after_cancel(self._timer_id)
+            end = datetime.now()
+            start_str = self._timer_start.strftime("%Y-%m-%d %H:%M:%S")
+            end_str = end.strftime("%Y-%m-%d %H:%M:%S")
+            try:
+                self._svc.log_time(self._task.task_id, start_str, end_str)
+                self._task = self._svc._task_repo.find_by_id(self._task.task_id)
+                self._load_time_entries()
+                self._build_ui()
+                self._on_refresh()
+            except Exception as exc:
+                messagebox.showerror("Error", str(exc), parent=self)
+            self._timer_label.config(text="00:00:00")
+            self._start_btn.config(state=tk.NORMAL)
+            self._stop_btn.config(state=tk.DISABLED)
+
+    def _mark_done(self) -> None:
+        if self._timer_running:
+            self._stop_timer()
+        try:
+            self._svc.complete_task(self._task.task_id)
+            self._task = self._svc._task_repo.find_by_id(self._task.task_id)
+            self._on_refresh()
+            self._build_ui()
+        except Exception as exc:
+            messagebox.showerror("Error", str(exc), parent=self)
+
+    def _edit(self) -> None:
+        from src.services.project_service import ProjectService
+        dialog = TaskFormDialog(self, ProjectService(), self._svc, on_save=self._on_edit_save, task=self._task)
+
+    def _on_edit_save(self) -> None:
+        self._task = self._svc._task_repo.find_by_id(self._task.task_id)
+        self._on_refresh()
+        self._build_ui()
+
+    def _delete(self) -> None:
+        if confirm_dialog(self, "Delete", f"Delete task '{self._task.title}'?"):
+            self._svc.delete_task(self._task.task_id)
+            self._on_refresh()
+            self.destroy()
+
+    def _on_close(self) -> None:
+        if self._timer_running:
+            if confirm_dialog(self, "Timer Running", "A timer is running for this task. Stop and save?"):
+                self._stop_timer()
+        self.destroy()
+

@@ -112,7 +112,6 @@ class DatabaseManager:
                 phone               TEXT    DEFAULT '',
                 profession          TEXT    DEFAULT '',
                 hourly_rate         REAL    DEFAULT 0,
-                tax_number          TEXT    DEFAULT '',
                 years_of_experience INTEGER DEFAULT 0,
                 is_senior           INTEGER DEFAULT 0
             )
