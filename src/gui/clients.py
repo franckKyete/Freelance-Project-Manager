@@ -307,15 +307,18 @@ class ClientDetailDialog(tk.Toplevel):
 
     def _edit(self) -> None:
         def on_save_client_edit(data: dict) -> None:
-            self._client.full_name = data["full_name"]
-            self._client.email = data["email"]
-            self._client.phone = data["phone"]
-            self._client.company_name = data["company_name"]
-            self._client.address = data["address"]
-            self._client.preferred_payment_method = data["payment"]
-            self._svc.update(self._client)
-            self._on_refresh()
-            self._build_ui()
+            try:
+                self._client.full_name = data["full_name"]
+                self._client.email = data["email"]
+                self._client.phone = data["phone"]
+                self._client.company_name = data["company_name"]
+                self._client.address = data["address"]
+                self._client.preferred_payment_method = data["payment"]
+                self._svc.update(self._client)
+                self._on_refresh()
+                self._build_ui()
+            except Exception as exc:
+                messagebox.showerror("Error", str(exc), parent=self)
 
         ClientFormDialog(self, title="Edit Client", client=self._client, on_save=on_save_client_edit)
 

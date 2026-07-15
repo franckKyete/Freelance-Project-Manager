@@ -128,3 +128,20 @@ class DuplicateInvoiceException(ApplicationException):
             else "Duplicate invoice number."
         )
         super().__init__(msg)
+
+
+class DuplicateClientEmailException(ApplicationException):
+    """Raised when attempting to save a client with an already-existing email."""
+
+    def __init__(self, email: str = "") -> None:
+        msg = f"Client with email '{email}' already exists." if email else "Duplicate client email."
+        super().__init__(msg)
+
+
+class DuplicateClientPhoneException(ApplicationException):
+    """Raised when attempting to save a client with an already-existing phone number."""
+
+    def __init__(self, phone: str = "") -> None:
+        msg = f"Client with phone '{phone}' already exists." if phone else "Duplicate client phone."
+        super().__init__(msg)
+

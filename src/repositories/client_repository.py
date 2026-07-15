@@ -132,3 +132,35 @@ class ClientRepository:
             preferred_payment_method=row["preferred_payment_method"],
             client_id=row["id"],
         )
+
+    def find_by_email(self, email: str) -> Optional[Client]:
+        """Retrieve a Client by their email.
+
+        Args:
+            email: The email address to look up.
+
+        Returns:
+            A Client instance, or None if not found.
+        """
+        db = get_db()
+        cursor = db.execute("SELECT * FROM clients WHERE LOWER(email)=?", (email.strip().lower(),))
+        row = cursor.fetchone()
+        return self._row_to_client(row) if row else None
+
+    def find_by_phone(self, phone: str) -> Optional[Client]:
+        """Retrieve a Client by their phone number.
+
+        Args:
+            phone: The phone number to look up.
+
+        Returns:
+            A Client instance, or None if not found.
+        """
+        val = phone.strip()
+        if not val:
+            return None
+        db = get_db()
+        cursor = db.execute("SELECT * FROM clients WHERE phone=?", (val,))
+        row = cursor.fetchone()
+        return self._row_to_client(row) if row else None
+
